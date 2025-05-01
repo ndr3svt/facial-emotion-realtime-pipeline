@@ -14,7 +14,7 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for cross-origin requests
 
 # Configuration
-MODEL_PATH = '../best_model/model_cnn_1.keras'
+MODEL_PATH = 'best_model/model_cnn_1.keras'
 IMG_SIZE = 48
 CLASS_NAMES = ['happy', 'neutral', 'sad', 'surprise']  # Update with your actual class names
 
