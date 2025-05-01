@@ -1,0 +1,479 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-time Emotion Detection</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 20px;
+      text-align: center;
+      background-color: #f5f5f5;
+    }
+    #video-container {
+      position: relative;
+      margin-bottom: 20px;
+      background-color: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    #webcam {
+      width: 100%;
+      max-width: 640px;
+      display: block;
+      margin: 0 auto;
+    }
+    #face-box {
+      position: absolute;
+      border: 3px solid #00ff00;
+      display: none;
+      border-radius: 4px;
+    }
+    #emotion-text {
+      font-size: 24px;
+      font-weight: bold;
+      margin: 20px 0;
+      padding: 10px;
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .bar-container {
+      width: 100%;
+      max-width: 500px;
+      margin: 10px auto;
+      text-align: left;
+      clear: both;
+      background-color: #fff;
+      padding: 5px 10px;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .emotion-label {
+      display: inline-block;
+      width: 70px;
+      font-weight: bold;
+    }
+    .emotion-bar {
+      height: 20px;
+      background-color: #4CAF50;
+      display: inline-block;
+      border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+    .emotion-value {
+      margin-left: 10px;
+      font-size: 14px;
+    }
+    .status {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #666;
+    }
+    .controls {
+      margin: 20px 0;
+    }
+    button {
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      text-align: center;
+      text-decoration: none;
+      display: inline-block;
+      font-size: 16px;
+      margin: 4px 2px;
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <h1>Real-time Emotion Detection</h1>
+  
+  <div id="video-container">
+    <video id="webcam" autoplay playsinline></video>
+    <div id="face-box"></div>
+  </div>
+  
+  <div class="controls">
+    <button id="start-button">Start Camera</button>
+    <button id="capture-button" disabled>Start Capture</button>
+    <button id="debug-button" disabled>Debug Frame</button>
+  </div>
+  
+  <div id="emotion-text">Waiting for camera...</div>
+  
+  <div id="emotion-bars"></div>
+  
+  <div class="status" id="status"></div>
+  
+  <div id="debug-results" style="display: none; margin-top: 20px; border: 1px solid #ccc; padding: 10px; background: #f9f9f9;">
+    <h3>Image Processing Debug</h3>
+    <div class="debug-images" style="display: flex; flex-wrap: wrap; justify-content: space-around;">
+      <div>
+        <h4>Original Image</h4>
+        <img id="debug-original" src="" alt="Original" style="max-width: 200px; max-height: 200px;">
+        <p id="debug-original-info"></p>
+      </div>
+      <div>
+        <h4>Resized to 48x48</h4>
+        <img id="debug-resized" src="" alt="Resized" style="max-width: 200px; max-height: 200px;">
+        <p id="debug-resized-info"></p>
+      </div>
+      <div>
+        <h4>Normalized</h4>
+        <img id="debug-normalized" src="" alt="Normalized" style="max-width: 200px; max-height: 200px;">
+        <p id="debug-normalized-info"></p>
+      </div>
+    </div>
+    <div class="debug-prediction">
+      <h4>Model Prediction from Debug Frame</h4>
+      <p id="debug-prediction"></p>
+    </div>
+    <div class="debug-details">
+      <h4>Technical Details</h4>
+      <pre id="debug-technical" style="overflow: auto; max-height: 200px;"></pre>
+    </div>
+  </div>
+  
+  <script>
+    // Configuration
+    const CAPTURE_INTERVAL = 500; // ms between frame captures
+    const VIDEO_WIDTH = 640;
+    const VIDEO_HEIGHT = 480;
+    let captureTimer = null;
+    let isCapturing = false;
+    
+    // DOM elements
+    const video = document.getElementById('webcam');
+    const faceBox = document.getElementById('face-box');
+    const emotionText = document.getElementById('emotion-text');
+    const emotionBars = document.getElementById('emotion-bars');
+    const statusElement = document.getElementById('status');
+    const startButton = document.getElementById('start-button');
+    const captureButton = document.getElementById('capture-button');
+    const debugButton = document.getElementById('debug-button');
+    
+    // Initialize webcam
+    async function setupWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: VIDEO_WIDTH, height: VIDEO_HEIGHT },
+          audio: false
+        });
+        video.srcObject = stream;
+        
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          video.onloadedmetadata = () => {
+            resolve();
+          };
+        });
+        
+        emotionText.textContent = 'Camera ready. Press Start Capture to begin detection.';
+        startButton.textContent = 'Camera Active';
+        startButton.disabled = true;
+        captureButton.disabled = false;
+        debugButton.disabled = false;
+        updateStatus('Camera initialized successfully.');
+        
+      } catch (error) {
+        console.error('Error accessing webcam:', error);
+        emotionText.textContent = 'Error: Could not access webcam';
+        updateStatus(`Camera error: ${error.message}`);
+      }
+    }
+    
+    // Capture frame and send to server
+    async function captureAndDetect() {
+      if (!isCapturing) return;
+      
+      try {
+        // Create a canvas to capture the video frame
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        
+        // Draw video frame to canvas
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        
+
+        // Add this code to crop to a square from the center:
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const x = (video.videoWidth - size) / 2;
+        const y = (video.videoHeight - size) / 2;
+        const squareCanvas = document.createElement('canvas');
+        squareCanvas.width = size;
+        squareCanvas.height = size;
+        const squareCtx = squareCanvas.getContext('2d');
+        squareCtx.drawImage(video, x, y, size, size, 0, 0, size, size);
+        // console.log(x, y, size , video.videoWidth, video.videoHeight)
+
+        // Use squareCanvas instead of canvas for the blob creation
+        const blob = await new Promise(resolve => {
+            squareCanvas.toBlob(resolve, 'image/jpeg', 0.9);
+        });
+        // Convert the canvas to a Blob first
+        // const blob = await new Promise(resolve => {
+        //   canvas.toBlob(resolve, 'image/jpeg', 0.9);
+        // });
+        
+        if (!blob) {
+          throw new Error("Failed to create image blob from canvas");
+        }
+        
+        // Convert blob to base64 using FileReader
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            // Get the base64 string (remove the data URL prefix)
+            const base64String = reader.result.split(',')[1];
+            resolve(base64String);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        
+        // console.log(`Created base64 data, length: ${base64Data.length}`);
+        
+        // Send to server
+        updateStatus('Sending image to server...');
+        
+        const response = await fetch('/api/emotion', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            image_base64: base64Data
+          })
+        });
+        
+        updateStatus(`Server response: ${response.status}`);
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error('Server error:', errorData);
+          emotionText.textContent = `Error: ${response.status}`;
+          throw new Error(`Server returned ${response.status}: ${errorData.error || 'Unknown error'}`);
+        }
+        
+        const result = await response.json();
+        
+        if (result.error) {
+          console.error(`Result error: ${result.error}`);
+          emotionText.textContent = 'Detection error';
+          faceBox.style.display = 'none';
+          updateStatus(`Error: ${result.error}`);
+          return;
+        }
+        
+        // Update UI with results
+        updateUI(result);
+        updateStatus('Last detection: ' + new Date().toLocaleTimeString());
+      } catch (error) {
+        console.error('Error in capture process:', error);
+        updateStatus(`Error: ${error.message}`);
+      }
+    }
+    
+    // Update UI with detection results
+    function updateUI(result) {
+      // Update emotion text
+      emotionText.textContent = `${result.emotion} (${(result.confidence * 100).toFixed(1)}%)`;
+      
+      // Update face box if face location is provided
+      if (result.face_location) {
+        const { x, y, width, height } = result.face_location;
+        
+        const videoRect = video.getBoundingClientRect();
+        const scaleX = videoRect.width / video.videoWidth;
+        const scaleY = videoRect.height / video.videoHeight;
+        
+        faceBox.style.left = `${(x+80) * scaleX}px`;
+        faceBox.style.top = `${y * scaleY}px`;
+        faceBox.style.width = `${width * scaleX}px`;
+        faceBox.style.height = `${height * scaleY}px`;
+        faceBox.style.display = 'block';
+      } else {
+        faceBox.style.display = 'none';
+      }
+      
+      // Update emotion bars
+      emotionBars.innerHTML = '';
+      Object.entries(result.all_scores).forEach(([emotion, score]) => {
+        const percentage = (score * 100).toFixed(1);
+        
+        const barContainer = document.createElement('div');
+        barContainer.className = 'bar-container';
+        
+        const label = document.createElement('span');
+        label.className = 'emotion-label';
+        label.textContent = emotion;
+        
+        const bar = document.createElement('div');
+        bar.className = 'emotion-bar';
+        bar.style.width = `${percentage}%`;
+        
+        const value = document.createElement('span');
+        value.className = 'emotion-value';
+        value.textContent = `${percentage}%`;
+        
+        barContainer.appendChild(label);
+        barContainer.appendChild(bar);
+        barContainer.appendChild(value);
+        
+        emotionBars.appendChild(barContainer);
+      });
+    }
+    
+    // Start/stop continuous capture
+    function toggleCapture() {
+      if (isCapturing) {
+        // Stop capturing
+        if (captureTimer) {
+          clearInterval(captureTimer);
+          captureTimer = null;
+        }
+        isCapturing = false;
+        captureButton.textContent = 'Start Capture';
+        updateStatus('Emotion detection stopped');
+      } else {
+        // Start capturing
+        isCapturing = true;
+        captureTimer = setInterval(captureAndDetect, CAPTURE_INTERVAL);
+        captureButton.textContent = 'Stop Capture';
+        updateStatus('Emotion detection started');
+      }
+    }
+    
+    // Update status message
+    function updateStatus(message) {
+      statusElement.textContent = message;
+    }
+    
+    // Event listeners
+    startButton.addEventListener('click', setupWebcam);
+    captureButton.addEventListener('click', toggleCapture);
+    debugButton.addEventListener('click', debugCurrentFrame);
+    
+    // Check if camera is already active
+    if (video.srcObject) {
+      startButton.disabled = true;
+      captureButton.disabled = false;
+      debugButton.disabled = false;
+    }
+    
+    // Debug current video frame
+    async function debugCurrentFrame() {
+      try {
+        // Disable button while processing
+        debugButton.disabled = true;
+        updateStatus('Capturing frame for debug...');
+        
+        // // Create a canvas to capture the video frame
+        // const canvas = document.createElement('canvas');
+        // canvas.width = video.videoWidth;
+        // canvas.height = video.videoHeight;
+        
+        // // Draw video frame to canvas
+        // const ctx = canvas.getContext('2d');
+        // ctx.drawImage(video, 0, 0);
+        
+        // // Convert to base64
+        // const dataURL = canvas.toDataURL('image/jpeg', 0.9);
+        // const base64Data = dataURL.replace(/^data:image\/jpeg;base64,/, '');
+        
+        // Create a canvas to capture the video frame
+        const canvas = document.createElement('canvas');
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        canvas.width = size;
+        canvas.height = size;
+
+        // Draw the center square of the video frame to canvas
+        const x = (video.videoWidth - size) / 2;
+        const y = (video.videoHeight - size) / 2;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, x, y, size, size, 0, 0, size, size);
+
+        // Convert to base64
+        const dataURL = canvas.toDataURL('image/jpeg', 0.9);
+        const base64Data = dataURL.replace(/^data:image\/jpeg;base64,/, '');
+        updateStatus('Sending frame to debug endpoint...');
+        
+        // Send to debug endpoint
+        const response = await fetch('/api/debug-image', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            image_base64: base64Data
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Server returned ${response.status}: ${errorData.error || 'Unknown error'}`);
+        }
+        
+        const result = await response.json();
+        updateStatus('Debug information received.');
+        
+        // Show debug results section
+        const debugResults = document.getElementById('debug-results');
+        debugResults.style.display = 'block';
+        
+        // Update image sources
+        document.getElementById('debug-original').src = result.debug_images.original;
+        document.getElementById('debug-resized').src = result.debug_images.resized;
+        document.getElementById('debug-normalized').src = result.debug_images.normalized;
+        
+        // Display image information
+        document.getElementById('debug-original-info').textContent = 
+          `Size: ${result.debug_info.original_shape}, Min: ${result.debug_info.original_min.toFixed(2)}, Max: ${result.debug_info.original_max.toFixed(2)}`;
+          
+        document.getElementById('debug-resized-info').textContent = 
+          `Size: ${result.debug_info.resized_shape}`;
+          
+        document.getElementById('debug-normalized-info').textContent = 
+          `Min: ${result.debug_info.normalized_min.toFixed(2)}, Max: ${result.debug_info.normalized_max.toFixed(2)}, Mean: ${result.debug_info.normalized_mean.toFixed(3)}`;
+        
+        // Show prediction
+        document.getElementById('debug-prediction').textContent = 
+          `Emotion: ${result.debug_info.predicted_emotion} (Confidence: ${(result.debug_info.confidence * 100).toFixed(2)}%)`;
+        
+        // Show technical details
+        document.getElementById('debug-technical').textContent = 
+          `Model Input Shape: ${JSON.stringify(result.debug_info.model_input_shape)}\n` +
+          `All Scores: ${JSON.stringify(result.debug_info.all_scores, null, 2)}`;
+        
+        // Scroll to debug results
+        debugResults.scrollIntoView({ behavior: 'smooth' });
+        
+      } catch (error) {
+        console.error('Error debugging frame:', error);
+        updateStatus(`Error debugging frame: ${error.message}`);
+      } finally {
+        // Re-enable button
+        debugButton.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
